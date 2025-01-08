@@ -54,6 +54,6 @@ async fn main() {
         }
 
         seq += 1;
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
