@@ -1,22 +1,23 @@
 
-use std::sync::Arc;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
     let target = std::env::args().nth(1).expect("Usage: ftthd-ping <target>");
     let target: std::net::Ipv6Addr = target.parse().expect("Invalid IPv6 address");
-    let socket = Arc::new(ftthd::icmp6::socket::RawIcmp6Socket::new().expect("Failed to create ICMPv6 socket"));
+    let socket = ftthd::icmp6::socket::RawIcmp6Socket::new().expect("Failed to create ICMPv6 socket");
     socket.set_recv_hoplimit(true).expect("Failed to set recv hop limit");
+    let socket = socket.into_async();
     
     let identifier: u16 = rand::random();
 
     let recv_socket = socket.clone();
-    std::thread::spawn(move || {
+    tokio::spawn(async move {
         let mut parser = ftthd::icmp6::Icmp6Parser::new();
 
         let expected_identifier = identifier;
         loop {
-            recv_socket.recv_parser(&mut parser).expect("Failed to receive packet");
+            recv_socket.recv_parser(&mut parser).await.expect("Failed to receive packet");
             let src_addr = parser.packet().target_addr;
             let ttl = parser.packet().hop_limit.unwrap().hop_limit;
             let parsed = parser.parse();
@@ -48,7 +49,7 @@ fn main() {
             eprintln!("Failed to set packet: {:?}", e);
             return;
         }
-        if let Err(e) = socket.send_writer(&writer) {
+        if let Err(e) = socket.send_writer(&writer).await {
             eprintln!("Failed to send packet: {:?}", e);
         }
 

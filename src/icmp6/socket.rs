@@ -1,9 +1,14 @@
 
 use super::packet;
 
+use tokio::io::unix::AsyncFd;
+use tokio::io::Interest;
+
 use std::ffi::c_int;
 use libc::socket;
 use libc::setsockopt;
+use std::os::fd::AsRawFd;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct RawIcmp6Socket {
@@ -292,6 +297,10 @@ impl RawIcmp6Socket {
     pub fn send_writer(&self, writer: &super::Icmp6Writer) -> Result<(), std::io::Error> {
         self.send(&writer.packet)
     }
+
+    pub fn into_async(self) -> AsyncIcmp6Socket {
+        AsyncIcmp6Socket::new(self)
+    }
 }
 
 impl Drop for RawIcmp6Socket {
@@ -300,6 +309,61 @@ impl Drop for RawIcmp6Socket {
             return;
         }
         unsafe { libc::close(self.socket) };
+    }
+}
+
+impl AsRawFd for RawIcmp6Socket {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        self.socket
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AsyncIcmp6Socket {
+    inner: Arc<AsyncFd<RawIcmp6Socket>>,
+}
+
+impl AsyncIcmp6Socket {
+    pub(crate) fn new(socket: RawIcmp6Socket) -> Self {
+        socket.set_nonblocking(true).unwrap();
+        let inner = Arc::new(AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE).unwrap());
+        Self { inner }
+    }
+
+    pub async fn recv(&self, packet: &mut packet::Packet) -> Result<(), std::io::Error> {
+        loop {
+            let mut guard = self.inner.readable().await?;
+            match guard.try_io(|inner| inner.get_ref().recv(packet)) {
+                Ok(res) => {
+                    return res;
+                }
+
+                Err(_) => continue,
+            }
+        }
+    }
+
+    pub async fn recv_parser(&self, parser: &mut super::Icmp6Parser) -> Result<(), std::io::Error> {
+        self.recv(&mut parser.packet).await?;
+        Ok(())
+    }
+
+    pub async fn send(&self, packet: &packet::Packet) -> Result<(), std::io::Error> {
+        loop {
+            let mut guard = self.inner.writable().await?;
+            match guard.try_io(|inner| inner.get_ref().send(packet)) {
+                Ok(res) => {
+                    return res;
+                }
+
+                Err(_) => continue,
+            }
+        }
+    }
+
+    pub async fn send_writer(&self, writer: &super::Icmp6Writer) -> Result<(), std::io::Error> {
+        self.send(&writer.packet).await?;
+        Ok(())
     }
 }
 
