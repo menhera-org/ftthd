@@ -95,7 +95,7 @@ impl std::fmt::Debug for RouterAdvertisement {
             write!(f, "O")?;
         }
 
-        write!(f, "hop_limit={}, ", self.hop_limit)?;
+        write!(f, " hop_limit={}, ", self.hop_limit)?;
         write!(f, "router_lifetime={}, ", self.router_lifetime)?;
         write!(f, "reachable_time={}, ", self.reachable_time)?;
         write!(f, "retrans_timer={}, ", self.retrans_timer)?;
