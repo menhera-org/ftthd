@@ -179,6 +179,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
+name = "const-uuid"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d286b96e2b8b76a6d91cd0d663ffbfbc42ab746aa7a086ad486a1c2aeba981c1"
+dependencies = [
+ "const-uuid-proc-macros",
+]
+
+[[package]]
+name = "const-uuid-proc-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05046f5cb236edcaa9a02704c2262373ea85b19435480e3fe1e6716d2acc2c6e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "env_filter"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -212,6 +232,7 @@ name = "ftthd"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "const-uuid",
  "env_logger",
  "futures",
  "libc",

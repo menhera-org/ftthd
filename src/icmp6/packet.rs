@@ -1,5 +1,7 @@
-use std::fmt::Debug;
 
+use crate::interface::InterfaceId;
+
+use std::fmt::Debug;
 
 #[derive(Debug)]
 pub struct PacketInfo {
@@ -7,7 +9,7 @@ pub struct PacketInfo {
     pub addr: std::net::Ipv6Addr,
 
     /// interface index where the packet is sent or received
-    pub if_index: u32,
+    pub if_index: InterfaceId,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -79,4 +81,12 @@ impl Debug for Packet {
         }
         debug.finish()
     }
+}
+
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum PacketExtension {
+    SourceAddress(std::net::Ipv6Addr),
+    DestinationAddress(std::net::Ipv6Addr),
+    TargetInterface(libc::c_uint),
 }

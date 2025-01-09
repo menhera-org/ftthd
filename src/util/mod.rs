@@ -1,7 +1,11 @@
 
+pub mod buffer;
+pub mod kind;
+
 use parking_lot::Mutex;
 
 use std::sync::Arc;
+
 
 #[derive(Debug)]
 struct DropDetectorInner<F>

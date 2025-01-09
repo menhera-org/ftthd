@@ -1,4 +1,6 @@
 
+use crate::interface::InterfaceId;
+
 use futures::TryStreamExt;
 
 #[derive(Debug, Clone, Copy)]
@@ -17,7 +19,8 @@ impl AddressManager {
         Self { handle: handle.handle.address() }
     }
 
-    pub async fn get_v6(&self, if_index: std::ffi::c_uint, scope: V6AddressRequestScope) -> Result<Vec<std::net::Ipv6Addr>, std::io::Error> {
+    pub async fn get_v6(&self, if_index: InterfaceId, scope: V6AddressRequestScope) -> Result<Vec<std::net::Ipv6Addr>, std::io::Error> {
+        let if_index = if_index.inner_unchecked();
         log::debug!("get_v6: if_index={}, scope={:?}", if_index, scope);
         let mut addrs = Vec::new();
         let mut req = self.handle.get();

@@ -1,40 +1,76 @@
 
 use parking_lot::RwLock;
+use tokio::sync::oneshot;
 
 use std::sync::Arc;
 use std::collections::HashMap;
-use tokio::sync::oneshot;
+use std::fmt::Debug;
 
-pub fn index_to_name(index: libc::c_uint) -> Result<String, std::io::Error> {
+pub fn index_to_name(index: InterfaceId) -> Result<String, std::io::Error> {
+    let index = if let Some(index) = index.inner() {
+        index
+    } else {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "interface index is unspecified"));
+    };
     let ifname_buf = [0u8; libc::IFNAMSIZ];
     let ret = unsafe { libc::if_indextoname(index, ifname_buf.as_ptr() as *mut libc::c_char) };
     if ret.is_null() {
         return Err(std::io::Error::last_os_error());
     }
     
-    let name = unsafe { std::ffi::CStr::from_ptr(ret as *const libc::c_char) };
-    Ok(name.to_string_lossy().into_owned())
+    let name = unsafe { std::ffi::CStr::from_ptr(ret) }.to_str().map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?.to_owned();
+    Ok(name)
 }
 
-pub fn name_to_index(name: &str) -> Result<libc::c_uint, std::io::Error> {
-    let index = unsafe { libc::if_nametoindex(name.as_ptr() as *const libc::c_char) };
+pub fn name_to_index(name: &str) -> Result<InterfaceId, std::io::Error> {
+    let index = unsafe { libc::if_nametoindex(name.as_ptr() as *const libc::c_char ) };
     if index == 0 {
         return Err(std::io::Error::last_os_error());
     }
-    Ok(index)
+    Ok(InterfaceId::new(index))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct InterfaceId {
+    if_index: libc::c_uint,
+}
+
+#[allow(dead_code)]
+impl InterfaceId {
+    pub const UNSPECIFIED: Self = Self { if_index: 0 };
+
+    pub(crate) fn new(if_index: libc::c_uint) -> Self {
+        Self { if_index }
+    }
+
+    pub(crate) fn inner_unchecked(&self) -> libc::c_uint {
+        self.if_index
+    }
+
+    pub(crate) fn inner(&self) -> Option<libc::c_uint> {
+        if self.if_index == 0 {
+            None
+        } else {
+            Some(self.if_index)
+        }
+    }
+
+    pub fn is_unspecified(&self) -> bool {
+        self.if_index == 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interface {
-    pub if_index: libc::c_uint,
+    pub if_id: InterfaceId,
     pub if_name: String,
 }
 
 #[derive(Debug)]
 pub(crate) struct InterfaceState {
-    interfaces: RwLock<HashMap<libc::c_uint, Interface>>,
-    if_by_name: RwLock<HashMap<String, libc::c_uint>>,
-    link_local_addrs: RwLock<HashMap<libc::c_uint, Vec<std::net::Ipv6Addr>>>,
+    interfaces: RwLock<HashMap<InterfaceId, Interface>>,
+    if_by_name: RwLock<HashMap<String, InterfaceId>>,
+    link_local_addrs: RwLock<HashMap<InterfaceId, Vec<std::net::Ipv6Addr>>>,
 }
 
 impl InterfaceState {
@@ -46,7 +82,7 @@ impl InterfaceState {
         }
     }
 
-    pub fn if_indexes(&self) -> Vec<libc::c_uint> {
+    pub fn if_indexes(&self) -> Vec<InterfaceId> {
         self.interfaces.read().keys().map(|v| *v).collect()
     }
 }
@@ -84,8 +120,8 @@ impl InterfaceStateManager {
                 let mut interfaces_map = HashMap::new();
                 let mut if_by_name = HashMap::new();
                 for interface in interfaces {
-                    if_by_name.insert(interface.if_name.clone(), interface.if_index);
-                    interfaces_map.insert(interface.if_index, interface);
+                    if_by_name.insert(interface.if_name.clone(), interface.if_id);
+                    interfaces_map.insert(interface.if_id, interface);
                 }
                 *state_clone.interfaces.write() = interfaces_map;
                 *state_clone.if_by_name.write() = if_by_name;
@@ -96,7 +132,7 @@ impl InterfaceStateManager {
                     let addrs = match addr_manager.get_v6(if_index, crate::rtnl::addr::V6AddressRequestScope::LinkLocal).await {
                         Ok(addrs) => addrs,
                         Err(e) => {
-                            log::error!("failed to get link-local addresses for interface {}: {}", if_index, e);
+                            log::error!("failed to get link-local addresses for interface {:?}: {}", if_index, e);
                             continue;
                         }
                     };
@@ -120,27 +156,27 @@ impl InterfaceStateManager {
         Self { state, _updater_join: updater_join }
     }
 
-    pub fn get_all_indexes(&self) -> Vec<libc::c_uint> {
+    pub fn get_all_indexes(&self) -> Vec<InterfaceId> {
         self.state.if_indexes()
     }
 
-    pub fn get_index_by_name(&self, name: &str) -> Option<libc::c_uint> {
+    pub fn get_index_by_name(&self, name: &str) -> Option<InterfaceId> {
         self.state.if_by_name.read().get(name).map(|v| *v)
     }
 
-    pub fn get(&self, if_index: libc::c_uint) -> Option<Interface> {
+    pub fn get(&self, if_index: InterfaceId) -> Option<Interface> {
         self.state.interfaces.read().get(&if_index).map(|v| v.clone())
     }
 
-    pub fn get_name_by_index(&self, if_index: libc::c_uint) -> Option<String> {
+    pub fn get_name_by_index(&self, if_index: InterfaceId) -> Option<String> {
         self.state.interfaces.read().get(&if_index).map(|v| v.if_name.clone())
     }
 
-    pub fn get_link_local_addrs(&self, if_index: libc::c_uint) -> Option<Vec<std::net::Ipv6Addr>> {
+    pub fn get_link_local_addrs(&self, if_index: InterfaceId) -> Option<Vec<std::net::Ipv6Addr>> {
         self.state.link_local_addrs.read().get(&if_index).map(|v| v.clone())
     }
 
-    pub fn get_link_local_addr(&self, if_index: libc::c_uint) -> Option<std::net::Ipv6Addr> {
+    pub fn get_link_local_addr(&self, if_index: InterfaceId) -> Option<std::net::Ipv6Addr> {
         self.state.link_local_addrs.read().get(&if_index).and_then(|v| v.first().cloned())
     }
 }

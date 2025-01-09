@@ -2,6 +2,7 @@
 use futures::TryStreamExt;
 
 use crate::interface::Interface;
+use crate::interface::InterfaceId;
 
 pub struct LinkManager {
     handle: rtnetlink::LinkHandle,
@@ -32,12 +33,13 @@ impl LinkManager {
                 continue;
             }
 
-            interfaces.push(Interface { if_index, if_name: if_name.unwrap() });
+            interfaces.push(Interface { if_id: InterfaceId::new(if_index), if_name: if_name.unwrap() });
         }
         Ok(interfaces)
     }
 
-    pub async fn get(&mut self, if_index: std::ffi::c_uint) -> Result<Option<Interface>, std::io::Error> {
+    pub async fn get(&mut self, if_index: InterfaceId) -> Result<Option<Interface>, std::io::Error> {
+        let if_index = if_index.inner_unchecked();
         let response = self.handle.get().match_index(if_index).execute();
         futures::pin_mut!(response);
         while let Some(response) = response.try_next().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))? {
@@ -55,7 +57,7 @@ impl LinkManager {
                 continue;
             }
 
-            return Ok(Some(Interface { if_index, if_name: if_name.unwrap() }));
+            return Ok(Some(Interface { if_id: InterfaceId::new(if_index), if_name: if_name.unwrap() }));
         }
         Ok(None)
     }
@@ -69,7 +71,7 @@ impl LinkManager {
                 continue;
             }
 
-            return Ok(Some(Interface { if_index, if_name: if_name.to_string() }));
+            return Ok(Some(Interface { if_id: InterfaceId::new(if_index), if_name: if_name.to_owned() }));
         }
         Ok(None)
     }

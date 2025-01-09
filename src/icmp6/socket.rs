@@ -1,5 +1,6 @@
 
 use super::packet;
+use crate::interface::InterfaceId;
 
 use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
@@ -162,7 +163,7 @@ impl RawIcmp6Socket {
                         let pktinfo = std::ptr::read_unaligned(data as *const libc::in6_pktinfo);
                         let dst: std::net::Ipv6Addr = pktinfo.ipi6_addr.s6_addr.into();
                         let ifindex = pktinfo.ipi6_ifindex;
-                        packet.info = Some(packet::PacketInfo { addr: dst, if_index: ifindex });
+                        packet.info = Some(packet::PacketInfo { addr: dst, if_index: InterfaceId::new(ifindex) });
                     }
 
                     (libc::IPPROTO_IPV6, libc::IPV6_HOPOPTS) => {
@@ -237,7 +238,7 @@ impl RawIcmp6Socket {
                 unsafe {
                     let data = libc::CMSG_DATA(cmsg) as *mut libc::in6_pktinfo;
                     (*data).ipi6_addr = libc::in6_addr { s6_addr: pktinfo.addr.octets() };
-                    (*data).ipi6_ifindex = pktinfo.if_index;
+                    (*data).ipi6_ifindex = pktinfo.if_index.inner_unchecked();
 
                     if packet.hop_limit.is_some() || packet.hop_by_hop.is_some() {
                         cmsg = libc::CMSG_NXTHDR(&info, cmsg);
