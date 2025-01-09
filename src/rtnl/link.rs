@@ -1,10 +1,7 @@
 
 use futures::TryStreamExt;
 
-pub struct Interface {
-    pub if_index: std::ffi::c_uint,
-    pub if_name: String,
-}
+use crate::interface::Interface;
 
 pub struct LinkManager {
     handle: rtnetlink::LinkHandle,

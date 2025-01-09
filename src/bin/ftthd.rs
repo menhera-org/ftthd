@@ -1,4 +1,6 @@
 
+use ftthd::interface::InterfaceStateManager;
+
 use clap::{Parser, Subcommand};
 
 use std::path::PathBuf;
@@ -63,8 +65,12 @@ async fn start(config: ftthd::config::ConfigManager) {
         assert!(config.is_loaded());
     }
 
-    let config_data = config.get().unwrap();
-    log::debug!("Configuration: {:?}", config_data);
+    {
+        let config_data = config.get().unwrap();
+        log::debug!("Configuration: {:?}", config_data);
+    }
+
+    let if_manager = InterfaceStateManager::new().await;
 }
 
 
