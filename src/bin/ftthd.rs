@@ -322,6 +322,8 @@ async fn start(config: ftthd::config::ConfigManager) {
                     log::error!("Failed to add route: {:?}", e);
                 }
 
+                let _ = rtnl_neighbor.proxy_delete(in_if, std::net::IpAddr::V6(tgt_addr)).await;
+
                 for out_if_index in out_ifs {
                     let _ = rtnl_neighbor.proxy_delete(out_if_index, std::net::IpAddr::V6(tgt_addr)).await;
 
