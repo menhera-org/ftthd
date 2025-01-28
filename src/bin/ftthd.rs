@@ -1,5 +1,5 @@
 
-use ftthd::interface::InterfaceStateManager;
+use ftthd::interface::{InterfaceId, InterfaceStateManager};
 
 use clap::{Parser, Subcommand};
 
@@ -316,7 +316,7 @@ async fn start(config: ftthd::config::ConfigManager) {
                     if_manager.get_index_by_name(name).unwrap()
                 }).collect::<Vec<_>>();
 
-                let _ = rtnl_route.delete_v6(in_if, tgt_addr, 128, None).await;
+                let _ = rtnl_route.delete_v6(InterfaceId::UNSPECIFIED, tgt_addr, 128, None).await;
 
                 if let Err(e) = rtnl_route.add_v6(in_if, tgt_addr, 128, None).await {
                     log::error!("Failed to add route: {:?}", e);
