@@ -1,5 +1,6 @@
 
 use ftthd::interface::{InterfaceId, InterfaceStateManager};
+use ftthd::group::MldSubscriptionManager;
 
 use clap::{Parser, Subcommand};
 
@@ -107,6 +108,8 @@ async fn start(config: ftthd::config::ConfigManager) {
             }
         }
     }
+
+    let mut subscription_manager = MldSubscriptionManager::new();
 
     let mut parser = ftthd::icmp6::Icmp6Parser::new();
     let mut writer = ftthd::icmp6::Icmp6Writer::new();
@@ -362,7 +365,52 @@ async fn start(config: ftthd::config::ConfigManager) {
             }
 
             ftthd::icmp6::Icmp6Packet::MulticastListenerQuery(mlq) => {
-                log::info!("Multicast Listener Query: {:?}", mlq);
+                let in_if = raw_packet.info.unwrap().if_index;
+                let if_name = if_manager.get(in_if).unwrap().if_name;
+
+                let config = config.get().unwrap();
+
+                if config.interfaces.upstream != if_name {
+                    log::debug!("Received Multicast Listener Query from non-configured interface: {}", if_name);
+                    continue;
+                }
+
+                let group_addr = mlq.group_address;
+
+                subscription_manager.remove_old_subscriptions(60);
+                let groups = subscription_manager.get_groups();
+                if !groups.contains(&group_addr) {
+                    log::debug!("Received Multicast Listener Query for non-subscribed group: {}", group_addr);
+                    continue;
+                }
+
+                let report_record = ftthd::icmp6::mld::MulticastReportRecord {
+                    multicast_address: group_addr,
+                    record_type: 2, // MODE_IS_EXCLUDE
+                    source_addresses: Vec::new(),
+                };
+
+                let report = ftthd::icmp6::mld::V2MulticastListenerReport {
+                    records: vec![report_record],
+                };
+
+                let src = if_manager.get_link_local_addr(in_if).unwrap();
+
+                writer.set_destination("ff02::16".parse().unwrap());
+                writer.set_hop_limit(Some(1));
+                writer.set_packet_info(Some(ftthd::icmp6::packet::PacketInfo {
+                    if_index: in_if,
+                    addr: src,
+                }));
+
+                if let Err(e) = writer.set_packet(ftthd::icmp6::Icmp6Packet::V2MulticastListenerReport(report)) {
+                    log::error!("Failed to set Multicast Listener Report: {:?}", e);
+                    continue;
+                }
+
+                if let Err(e) = socket.send_writer(&writer).await {
+                    log::error!("Failed to send Multicast Listener Report: {:?}", e);
+                }
             }
 
             ftthd::icmp6::Icmp6Packet::V1MulticastListenerReport(mlr) => {
@@ -374,7 +422,53 @@ async fn start(config: ftthd::config::ConfigManager) {
             }
 
             ftthd::icmp6::Icmp6Packet::V2MulticastListenerReport(mlr) => {
-                log::info!("Multicast Listener Report (v2): {:?}", mlr);
+                let in_if = raw_packet.info.unwrap().if_index;
+                let if_name = if_manager.get(in_if).unwrap().if_name;
+
+                let config = config.get().unwrap();
+
+                if !config.interfaces.downstreams.contains(&if_name) {
+                    log::debug!("Received Multicast Listener Report from non-downstream interface: {}", if_name);
+                    continue;
+                }
+
+                subscription_manager.remove_old_subscriptions(60);
+
+                let mut records = Vec::new();
+                for record in mlr.records {
+                    let group = record.multicast_address;
+                    let report_record = ftthd::icmp6::mld::MulticastReportRecord {
+                        multicast_address: group,
+                        record_type: 2, // MODE_IS_EXCLUDE
+                        source_addresses: Vec::new(),
+                    };
+                    records.push(report_record);
+                    subscription_manager.add_subscription(in_if, group);
+                }
+
+                let out_if_name = &config.interfaces.upstream;
+                let out_if = if_manager.get_index_by_name(out_if_name).unwrap();
+                let src = if_manager.get_link_local_addr(out_if).unwrap();
+
+                writer.set_destination("ff02::16".parse().unwrap());
+                writer.set_hop_limit(Some(1));
+                writer.set_packet_info(Some(ftthd::icmp6::packet::PacketInfo {
+                    if_index: out_if,
+                    addr: src,
+                }));
+
+                let report = ftthd::icmp6::mld::V2MulticastListenerReport {
+                    records,
+                };
+
+                if let Err(e) = writer.set_packet(ftthd::icmp6::Icmp6Packet::V2MulticastListenerReport(report)) {
+                    log::error!("Failed to set Multicast Listener Report: {:?}", e);
+                    continue;
+                }
+
+                if let Err(e) = socket.send_writer(&writer).await {
+                    log::error!("Failed to send Multicast Listener Report: {:?}", e);
+                }
             }
 
             _ => {
