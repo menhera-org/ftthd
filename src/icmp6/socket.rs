@@ -70,20 +70,20 @@ impl RawIcmp6Socket {
         Ok(())
     }
 
-    fn ipv6_mreq(&self, addr: std::net::Ipv6Addr) -> libc::ipv6_mreq {
+    fn ipv6_mreq(&self, addr: std::net::Ipv6Addr, if_index: InterfaceId) -> libc::ipv6_mreq {
         libc::ipv6_mreq {
             ipv6mr_multiaddr: libc::in6_addr { s6_addr: addr.octets() },
-            ipv6mr_interface: 0,
+            ipv6mr_interface: if_index.inner_unchecked(),
         }
     }
 
-    pub fn join_multicast(&self, group: std::net::Ipv6Addr) -> Result<(), std::io::Error> {
-        let mreq = self.ipv6_mreq(group);
+    pub fn join_multicast(&self, group: std::net::Ipv6Addr, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        let mreq = self.ipv6_mreq(group, if_index);
         unsafe { self.setsockopt(Ipv6Opt::IPV6_ADD_MEMBERSHIP, &mreq) }
     }
 
-    pub fn leave_multicast(&self, group: std::net::Ipv6Addr) -> Result<(), std::io::Error> {
-        let mreq = self.ipv6_mreq(group);
+    pub fn leave_multicast(&self, group: std::net::Ipv6Addr, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        let mreq = self.ipv6_mreq(group, if_index);
         unsafe { self.setsockopt(Ipv6Opt::IPV6_DROP_MEMBERSHIP, &mreq) }
     }
 
@@ -435,12 +435,12 @@ impl AsyncIcmp6Socket {
         self.inner.get_ref().as_raw_fd()
     }
 
-    pub fn join_multicast(&self, group: std::net::Ipv6Addr) -> Result<(), std::io::Error> {
-        self.inner.get_ref().join_multicast(group)
+    pub fn join_multicast(&self, group: std::net::Ipv6Addr, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        self.inner.get_ref().join_multicast(group, if_index)
     }
 
-    pub fn leave_multicast(&self, group: std::net::Ipv6Addr) -> Result<(), std::io::Error> {
-        self.inner.get_ref().leave_multicast(group)
+    pub fn leave_multicast(&self, group: std::net::Ipv6Addr, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        self.inner.get_ref().leave_multicast(group, if_index)
     }
 
     pub fn multicast_add_vif(&self, vif: mifi_t, if_index: InterfaceId) -> Result<(), std::io::Error> {

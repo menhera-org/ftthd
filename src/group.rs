@@ -1,4 +1,5 @@
 
+use crate::config::InterfaceConfig;
 use crate::interface::InterfaceId;
 use crate::icmp6::AsyncIcmp6Socket;
 use crate::icmp6::socket;
@@ -132,9 +133,76 @@ impl MldSubscriptionManager {
                 }
             }
         }
+
+        self.subscriptions.retain(|_, subscriptions| !subscriptions.is_empty());
     }
 
     pub fn get_groups(&self) -> HashSet<Ipv6Addr> {
         self.subscriptions.iter().flat_map(|(_, subscriptions)| subscriptions.keys().cloned()).collect()
+    }
+}
+
+pub fn is_solicited_node_address(addr: &std::net::Ipv6Addr) -> bool {
+    let solicited_node_prefix: Ipv6Addr = "ff02::1:ff00:0".parse().unwrap();
+    let prefix = u128::from_be_bytes(solicited_node_prefix.octets());
+    let wildcard_mask: u128 = 0xffffff;
+    let addr = u128::from_be_bytes(addr.octets());
+    (addr & !wildcard_mask) == prefix
+}
+
+#[derive(Debug)]
+pub struct NdpMulticastManager {
+    socket: AsyncIcmp6Socket,
+    subscriptions: HashMap<Ipv6Addr, HashMap<InterfaceId, u64>>,
+    interface_ids: HashSet<InterfaceId>,
+}
+
+impl NdpMulticastManager {
+    pub fn new(socket: AsyncIcmp6Socket, interface_config: InterfaceConfig) -> Self {
+        Self {
+            socket,
+            subscriptions: HashMap::new(),
+            interface_ids: interface_config.interfaces().iter()
+                .map(|name| crate::interface::name_to_index(name))
+                .filter(|id| id.is_ok())
+                .map(|id| id.unwrap())
+                .collect(),
+        }
+    }
+
+    pub fn add_subscription(&mut self, solicited_node_addr: Ipv6Addr, if_index: InterfaceId) {
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let prev = self.subscriptions.entry(solicited_node_addr).or_insert(HashMap::new()).insert(if_index, timestamp);
+        if prev.is_some() {
+            return;
+        }
+
+        let mut ifs = self.interface_ids.clone();
+        ifs.remove(&if_index);
+
+        for if_id in ifs {
+            if let Err(e) = self.socket.join_multicast(solicited_node_addr, if_id) {
+                log::error!("failed to join multicast: {}", e);
+            }
+        }
+    }
+
+    pub fn remove_old_subscriptions(&mut self, timeout: u64) {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        for solicited_node_addr in self.subscriptions.keys().cloned().collect::<Vec<_>>() {
+            let subscriptions = self.subscriptions.get_mut(&solicited_node_addr).unwrap();
+            for (if_index, timestamp) in subscriptions.clone().iter() {
+                if now - *timestamp > timeout {
+                    subscriptions.remove(if_index);
+                    if subscriptions.is_empty() {
+                        if let Err(e) = self.socket.leave_multicast(solicited_node_addr, InterfaceId::UNSPECIFIED) {
+                            log::error!("failed to leave multicast: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.subscriptions.retain(|_, subscriptions| !subscriptions.is_empty());
     }
 }

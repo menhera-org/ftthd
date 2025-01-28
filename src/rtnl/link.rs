@@ -92,4 +92,14 @@ impl LinkManager {
         }
         Ok(None)
     }
+
+    pub async fn set_all_multicast_mode(&mut self, if_index: InterfaceId, value: bool) -> Result<(), std::io::Error> {
+        let if_index = if_index.inner_unchecked();
+        let mut req = self.handle.set(if_index);
+        if value {
+            req.message_mut().header.flags.push(netlink_packet_route::link::LinkFlag::Allmulti);
+        }
+        req.message_mut().header.change_mask.push(netlink_packet_route::link::LinkFlag::Allmulti);
+        req.execute().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    }
 }

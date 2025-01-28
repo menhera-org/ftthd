@@ -1,7 +1,7 @@
 
 use ftthd::icmp6::socket::RawIcmp6Socket;
 use ftthd::icmp6::Icmp6Packet;
-use ftthd::interface;
+use ftthd::interface::{self, InterfaceId};
 
 use std::str::FromStr;
 
@@ -11,8 +11,8 @@ fn main() -> std::io::Result<()> {
     socket.set_recv_hoplimit(true)?;
     socket.set_recv_hopopts(true)?;
     socket.set_recv_pktinfo(true)?;
-    socket.join_multicast(std::net::Ipv6Addr::from_str("ff02::16").unwrap())?;
-    socket.join_multicast(std::net::Ipv6Addr::from_str("ff02::2").unwrap())?;
+    socket.join_multicast(std::net::Ipv6Addr::from_str("ff02::16").unwrap(), InterfaceId::UNSPECIFIED)?;
+    socket.join_multicast(std::net::Ipv6Addr::from_str("ff02::2").unwrap(), InterfaceId::UNSPECIFIED)?;
     //socket.set_router_alert(0)?;
     socket.set_mrt_flag(true)?;
     let mut parser = ftthd::icmp6::Icmp6Parser::new();

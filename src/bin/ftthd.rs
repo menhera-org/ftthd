@@ -1,6 +1,7 @@
 
 use ftthd::interface::{InterfaceId, InterfaceStateManager};
 use ftthd::group::MldSubscriptionManager;
+use ftthd::group::NdpMulticastManager;
 
 use clap::{Parser, Subcommand};
 
@@ -81,8 +82,10 @@ async fn start(config: ftthd::config::ConfigManager) {
     raw_socket.set_recv_hoplimit(true).unwrap();
     raw_socket.set_recv_hopopts(true).unwrap();
     raw_socket.set_recv_pktinfo(true).unwrap();
-    raw_socket.set_multicast_all(true).unwrap();
     raw_socket.set_multicast_loop(false).unwrap();
+    raw_socket.set_multicast_all(true).unwrap();
+
+    raw_socket.join_multicast("ff02::16".parse().unwrap(), InterfaceId::UNSPECIFIED).unwrap();
 
     let socket = ftthd::icmp6::AsyncIcmp6Socket::new(raw_socket);
 
@@ -109,7 +112,21 @@ async fn start(config: ftthd::config::ConfigManager) {
         }
     }
 
+    if downstream_if_ids.contains(&upstream_if_id) {
+        log::error!("Upstream interface is also a downstream interface");
+        return;
+    }
+
+    let interface_ids = config.get().unwrap().interfaces.interfaces().iter().map(|name| {
+        if_manager.get_index_by_name(name).unwrap()
+    }).collect::<Vec<_>>();
+
+    for if_id in interface_ids {
+        let _ = rtnl_link.set_all_multicast_mode(if_id, true).await;
+    }
+
     let mut subscription_manager = MldSubscriptionManager::new(socket.clone(), config.get().unwrap().interfaces.clone());
+    let mut ndp_multicast_manager = NdpMulticastManager::new(socket.clone(), config.get().unwrap().interfaces.clone());
 
     let mut parser = ftthd::icmp6::Icmp6Parser::new();
     let mut writer = ftthd::icmp6::Icmp6Writer::new();
@@ -459,9 +476,13 @@ async fn start(config: ftthd::config::ConfigManager) {
 
                 let config = config.get().unwrap();
 
+                let is_from_downstream;
+
                 if !config.interfaces.downstreams.contains(&if_name) {
                     log::debug!("Received Multicast Listener Report from non-downstream interface: {}", if_name);
-                    continue;
+                    is_from_downstream = false;
+                } else {
+                    is_from_downstream = true;
                 }
 
                 subscription_manager.remove_old_subscriptions(60);
@@ -469,6 +490,19 @@ async fn start(config: ftthd::config::ConfigManager) {
                 let mut records = Vec::new();
                 for record in mlr.records {
                     let group = record.multicast_address;
+
+                    if ftthd::group::is_solicited_node_address(&group) {
+                        log::info!("Received Multicast Listener Report for solicited node address: {}", group);
+
+                        ndp_multicast_manager.add_subscription(group, in_if);
+                        ndp_multicast_manager.remove_old_subscriptions(3600);
+                        continue;
+                    }
+
+                    if !is_from_downstream {
+                        continue;
+                    }
+
                     let report_record = ftthd::icmp6::mld::MulticastReportRecord {
                         multicast_address: group,
                         record_type: 2, // MODE_IS_EXCLUDE
@@ -488,6 +522,11 @@ async fn start(config: ftthd::config::ConfigManager) {
                     if_index: out_if,
                     addr: src,
                 }));
+
+                if records.is_empty() {
+                    log::debug!("No groups to report");
+                    continue;
+                }
 
                 let report = ftthd::icmp6::mld::V2MulticastListenerReport {
                     records: records.clone(),
