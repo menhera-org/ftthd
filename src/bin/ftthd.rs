@@ -89,6 +89,24 @@ async fn start(config: ftthd::config::ConfigManager) {
     let rtnl_route = rtnl.route();
     let rtnl_neighbor = rtnl.neighbor();
 
+    let downstream_if_ids = config.get().unwrap().interfaces.downstreams.iter().map(|name| {
+        if_manager.get_index_by_name(name).unwrap()
+    }).collect::<Vec<_>>();
+
+    let upstream_if_id = if_manager.get_index_by_name(&config.get().unwrap().interfaces.upstream).unwrap();
+
+    let upstream_global_addrs = rtnl.address().get_v6(upstream_if_id, ftthd::rtnl::addr::V6AddressRequestScope::Global).await.unwrap();
+
+    for addr in upstream_global_addrs {
+        for if_id in downstream_if_ids.iter() {
+            let _ = rtnl_neighbor.proxy_delete(*if_id, std::net::IpAddr::V6(addr)).await;
+
+            if let Err(e) = rtnl_neighbor.proxy_add(*if_id, std::net::IpAddr::V6(addr)).await {
+                log::error!("Failed to add proxy neighbor: {:?}", e);
+            }
+        }
+    }
+
     let mut parser = ftthd::icmp6::Icmp6Parser::new();
     let mut writer = ftthd::icmp6::Icmp6Writer::new();
     loop {
