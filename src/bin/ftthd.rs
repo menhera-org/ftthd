@@ -81,6 +81,7 @@ async fn start(config: ftthd::config::ConfigManager) {
     raw_socket.set_recv_hopopts(true).unwrap();
     raw_socket.set_recv_pktinfo(true).unwrap();
     raw_socket.set_multicast_all(true).unwrap();
+    raw_socket.set_multicast_loop(false).unwrap();
 
     let socket = ftthd::icmp6::AsyncIcmp6Socket::new(raw_socket);
 
