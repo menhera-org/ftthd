@@ -97,11 +97,11 @@ async fn start(config: ftthd::config::ConfigManager) {
 
     let upstream_global_addrs = rtnl.address().get_v6(upstream_if_id, ftthd::rtnl::addr::V6AddressRequestScope::Global).await.unwrap();
 
-    for addr in upstream_global_addrs {
+    for addr in &upstream_global_addrs {
         for if_id in downstream_if_ids.iter() {
-            let _ = rtnl_neighbor.proxy_delete(*if_id, std::net::IpAddr::V6(addr)).await;
+            let _ = rtnl_neighbor.proxy_delete(*if_id, std::net::IpAddr::V6(*addr)).await;
 
-            if let Err(e) = rtnl_neighbor.proxy_add(*if_id, std::net::IpAddr::V6(addr)).await {
+            if let Err(e) = rtnl_neighbor.proxy_add(*if_id, std::net::IpAddr::V6(*addr)).await {
                 log::error!("Failed to add proxy neighbor: {:?}", e);
             }
         }
@@ -253,6 +253,11 @@ async fn start(config: ftthd::config::ConfigManager) {
                     continue;
                 } else {
                     log::info!("Received Neighbor Solicitation for non-link-local address: {}", tgt_addr);
+                }
+
+                if upstream_global_addrs.contains(&tgt_addr) {
+                    log::debug!("Received Neighbor Solicitation for upstream global address: {}", tgt_addr);
+                    continue;
                 }
 
                 let out_ifs = config.interfaces.interfaces().iter().filter(|name| {
