@@ -26,6 +26,10 @@ impl RawIcmp6Socket {
         Ok(Self { socket })
     }
 
+    pub fn from_fd(fd: std::os::unix::io::RawFd) -> Self {
+        Self { socket: fd }
+    }
+
     pub fn set_nonblocking(&self, nonblocking: bool) -> Result<(), std::io::Error> {
         let flags = unsafe { libc::fcntl(self.socket, libc::F_GETFL, 0) };
         if flags < 0 {
@@ -118,6 +122,11 @@ impl RawIcmp6Socket {
         let opt = if flag { Ipv6Opt::MRT6_INIT } else { Ipv6Opt::MRT6_DONE };
         let flag = 1;
         unsafe { self.setsockopt(opt, &flag) }
+    }
+
+    pub fn set_multicast_all(&self, multicast_all: bool) -> Result<(), std::io::Error> {
+        let multicast_all = if multicast_all { 1 } else { 0 };
+        unsafe { self.setsockopt(Ipv6Opt::IPV6_MULTICAST_ALL, &multicast_all) }
     }
 
     pub fn recv(&self, packet: &mut packet::Packet) -> Result<(), std::io::Error> {
@@ -230,9 +239,10 @@ impl RawIcmp6Socket {
                     let cmsg = unsafe { cmsg.as_mut().unwrap() };
                     cmsg.cmsg_level = libc::IPPROTO_IPV6;
                     cmsg.cmsg_type = libc::IPV6_PKTINFO;
-                    cmsg.cmsg_len = unsafe { libc::CMSG_LEN(std::mem::size_of::<libc::cmsghdr>() as libc::c_uint + std::mem::size_of::<libc::in6_pktinfo>() as libc::c_uint) as usize };
+                    let len = std::mem::size_of::<libc::in6_pktinfo>() as libc::c_uint;
+                    cmsg.cmsg_len = unsafe { libc::CMSG_LEN(len) as usize };
 
-                    cmsg_len += cmsg.cmsg_len;
+                    cmsg_len += unsafe { libc::CMSG_SPACE(len) } as usize;
                 }
 
                 unsafe {
@@ -251,9 +261,10 @@ impl RawIcmp6Socket {
                     let cmsg = unsafe { cmsg.as_mut().unwrap() };
                     cmsg.cmsg_level = libc::IPPROTO_IPV6;
                     cmsg.cmsg_type = libc::IPV6_HOPLIMIT;
-                    cmsg.cmsg_len = unsafe { libc::CMSG_LEN(std::mem::size_of::<libc::cmsghdr>() as libc::c_uint + std::mem::size_of::<libc::c_int>() as libc::c_uint) as usize };
+                    let len = std::mem::size_of::<libc::c_int>() as libc::c_uint;
+                    cmsg.cmsg_len = unsafe { libc::CMSG_LEN(len) as usize };
 
-                    cmsg_len += cmsg.cmsg_len;
+                    cmsg_len += unsafe { libc::CMSG_SPACE(len) } as usize;
                 }
 
                 unsafe {
@@ -271,9 +282,10 @@ impl RawIcmp6Socket {
                     let cmsg = unsafe { cmsg.as_mut().unwrap() };
                     cmsg.cmsg_level = libc::IPPROTO_IPV6;
                     cmsg.cmsg_type = libc::IPV6_HOPOPTS;
-                    cmsg.cmsg_len = unsafe { libc::CMSG_LEN(std::mem::size_of::<libc::cmsghdr>() as libc::c_uint + hop_by_hop.hop_by_hop.len() as libc::c_uint) as usize };
+                    let len = hop_by_hop.hop_by_hop.len() as libc::c_uint;
+                    cmsg.cmsg_len = unsafe { libc::CMSG_LEN(len) as usize };
 
-                    cmsg_len += cmsg.cmsg_len;
+                    cmsg_len += unsafe { libc::CMSG_SPACE(len) } as usize;
                 }
 
                 unsafe {
@@ -325,7 +337,7 @@ pub struct AsyncIcmp6Socket {
 }
 
 impl AsyncIcmp6Socket {
-    pub(crate) fn new(socket: RawIcmp6Socket) -> Self {
+    pub fn new(socket: RawIcmp6Socket) -> Self {
         socket.set_nonblocking(true).unwrap();
         let inner = Arc::new(AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE).unwrap());
         Self { inner }
@@ -366,6 +378,18 @@ impl AsyncIcmp6Socket {
         self.send(&writer.packet).await?;
         Ok(())
     }
+
+    pub fn fd(&self) -> std::os::unix::io::RawFd {
+        self.inner.get_ref().as_raw_fd()
+    }
+
+    pub fn join_multicast(&self, group: std::net::Ipv6Addr) -> Result<(), std::io::Error> {
+        self.inner.get_ref().join_multicast(group)
+    }
+
+    pub fn leave_multicast(&self, group: std::net::Ipv6Addr) -> Result<(), std::io::Error> {
+        self.inner.get_ref().leave_multicast(group)
+    }
 }
 
 pub trait SocketOpt {
@@ -400,6 +424,7 @@ impl Ipv6Opt {
     pub const IPV6_MTU: Self = Self(libc::IPV6_MTU);
     pub const IPV6_RECVHOPOPTS: Self = Self(libc::IPV6_RECVHOPOPTS);
     pub const IPV6_RECVHOPLIMIT: Self = Self(libc::IPV6_RECVHOPLIMIT);
+    pub const IPV6_MULTICAST_ALL: Self = Self(libc::IPV6_MULTICAST_ALL);
 
     const MRT6_BASE: c_int = 200;
     pub const MRT6_INIT: Self = Self(Self::MRT6_BASE + 0);

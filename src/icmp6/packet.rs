@@ -3,7 +3,7 @@ use crate::interface::InterfaceId;
 
 use std::fmt::Debug;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PacketInfo {
     /// source address for sending, or destination address for receiving
     pub addr: std::net::Ipv6Addr,

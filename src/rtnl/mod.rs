@@ -3,6 +3,8 @@
 
 pub mod addr;
 pub mod link;
+pub mod route;
+pub mod neighbor;
 
 pub struct RtnetlinkConnection {
     pub(crate) handle: rtnetlink::Handle,
@@ -27,5 +29,13 @@ impl RtnetlinkConnection {
 
     pub fn link(&self) -> link::LinkManager {
         link::LinkManager::new(&self)
+    }
+
+    pub fn route(&self) -> route::RouteManager {
+        route::RouteManager::new(&self)
+    }
+
+    pub fn neighbor(&self) -> neighbor::NeighborManager {
+        neighbor::NeighborManager::new(&self)
     }
 }

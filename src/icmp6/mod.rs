@@ -4,6 +4,9 @@ pub mod packet;
 pub mod mld;
 pub mod ndp;
 
+pub use socket::RawIcmp6Socket;
+pub use socket::AsyncIcmp6Socket;
+
 use mld::*;
 use ndp::*;
 

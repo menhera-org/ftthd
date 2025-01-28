@@ -75,4 +75,21 @@ impl LinkManager {
         }
         Ok(None)
     }
+
+    pub async fn get_link_layer_address(&mut self, if_index: InterfaceId) -> Result<Option<Vec<u8>>, std::io::Error> {
+        let if_index = if_index.inner_unchecked();
+        let response = self.handle.get().match_index(if_index).execute();
+        futures::pin_mut!(response);
+        while let Some(response) = response.try_next().await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))? {
+            for link in response.attributes.iter() {
+                match link {
+                    netlink_packet_route::link::LinkAttribute::Address(addr) => {
+                        return Ok(Some(addr.clone()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(None)
+    }
 }
