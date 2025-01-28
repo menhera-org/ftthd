@@ -5,6 +5,7 @@ use ftthd::group::NdpMulticastManager;
 
 use clap::{Parser, Subcommand};
 
+use std::net::Ipv6Addr;
 use std::path::PathBuf;
 
 
@@ -394,6 +395,11 @@ async fn start(config: ftthd::config::ConfigManager) {
 
                 let group_addr = mlq.group_address;
 
+                if group_addr < "ff03::".parse::<Ipv6Addr>().unwrap() {
+                    log::debug!("Received Multicast Listener Query for link-local or node-local group: {}", group_addr);
+                    continue;
+                }
+
                 subscription_manager.remove_old_subscriptions(60);
                 let groups = subscription_manager.get_groups();
                 if !groups.contains(&group_addr) {
@@ -500,6 +506,11 @@ async fn start(config: ftthd::config::ConfigManager) {
                     }
 
                     if !is_from_downstream {
+                        continue;
+                    }
+
+                    if group < "ff03::".parse::<Ipv6Addr>().unwrap() {
+                        log::debug!("Received Multicast Listener Report for link-local or node-local group: {}", group);
                         continue;
                     }
 
