@@ -109,7 +109,7 @@ async fn start(config: ftthd::config::ConfigManager) {
         }
     }
 
-    let mut subscription_manager = MldSubscriptionManager::new();
+    let mut subscription_manager = MldSubscriptionManager::new(socket.clone(), config.get().unwrap().interfaces.clone());
 
     let mut parser = ftthd::icmp6::Icmp6Parser::new();
     let mut writer = ftthd::icmp6::Icmp6Writer::new();
@@ -411,6 +411,38 @@ async fn start(config: ftthd::config::ConfigManager) {
                 if let Err(e) = socket.send_writer(&writer).await {
                     log::error!("Failed to send Multicast Listener Report: {:?}", e);
                 }
+
+                log::info!("Sent Multicast Listener Report for group: {}", group_addr);
+
+                let mut mlq = mlq.clone();
+                mlq.source_addresses.clear();
+
+                writer.set_destination("ff02::16".parse().unwrap());
+                writer.set_hop_limit(Some(1));
+
+                let out_ifs = config.interfaces.downstreams.iter().map(|name| {
+                    if_manager.get_index_by_name(name).unwrap()
+                }).collect::<Vec<_>>();
+
+                for out_if in out_ifs {
+                    let src = if_manager.get_link_local_addr(out_if).unwrap();
+
+                    writer.set_packet_info(Some(ftthd::icmp6::packet::PacketInfo {
+                        if_index: out_if,
+                        addr: src,
+                    }));
+
+                    if let Err(e) = writer.set_packet(ftthd::icmp6::Icmp6Packet::MulticastListenerQuery(mlq.clone())) {
+                        log::error!("Failed to set Multicast Listener Query: {:?}", e);
+                        continue;
+                    }
+
+                    if let Err(e) = socket.send_writer(&writer).await {
+                        log::error!("Failed to send Multicast Listener Query: {:?}", e);
+                    }
+                }
+
+                log::info!("Sent Multicast Listener Query for group: {}", group_addr);
             }
 
             ftthd::icmp6::Icmp6Packet::V1MulticastListenerReport(mlr) => {
@@ -458,7 +490,7 @@ async fn start(config: ftthd::config::ConfigManager) {
                 }));
 
                 let report = ftthd::icmp6::mld::V2MulticastListenerReport {
-                    records,
+                    records: records.clone(),
                 };
 
                 if let Err(e) = writer.set_packet(ftthd::icmp6::Icmp6Packet::V2MulticastListenerReport(report)) {
@@ -467,8 +499,10 @@ async fn start(config: ftthd::config::ConfigManager) {
                 }
 
                 if let Err(e) = socket.send_writer(&writer).await {
-                    log::error!("Failed to send Multicast Listener Report: {:?}", e);
+                    log::error!("Failed to send Multicast Listener Report: {:?}, writer: {:?}", e, &writer);
                 }
+
+                log::info!("Sent Multicast Listener Report for groups: {:?}", records.iter().map(|r| r.multicast_address).collect::<Vec<_>>());
             }
 
             _ => {

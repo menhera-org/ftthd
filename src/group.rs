@@ -1,5 +1,7 @@
 
 use crate::interface::InterfaceId;
+use crate::icmp6::AsyncIcmp6Socket;
+use crate::icmp6::socket;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -22,7 +24,7 @@ pub struct MldMembership {
     state: MldMenbershipState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MldSubscription {
     pub timestamp: u64,
     pub group_addr: Ipv6Addr,
@@ -30,14 +32,66 @@ pub struct MldSubscription {
 
 #[derive(Debug)]
 pub struct MldSubscriptionManager {
+    socket: AsyncIcmp6Socket,
     subscriptions: HashMap<InterfaceId, HashMap<Ipv6Addr, MldSubscription>>,
+    vifs: HashMap<InterfaceId, socket::mifi_t>,
+    last_vifd: socket::mifi_t,
+    parent_if_index: InterfaceId,
 }
 
 impl MldSubscriptionManager {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(socket: AsyncIcmp6Socket, interface_config: crate::config::InterfaceConfig) -> Self {
+        let parent_if_index = crate::interface::name_to_index(&interface_config.upstream).unwrap();
+        let downstreams = interface_config.downstreams.iter()
+            .map(|name| crate::interface::name_to_index(name))
+            .filter(|id| id.is_ok())
+            .map(|id| id.unwrap())
+            .collect::<Vec<_>>();
+
+        let mut instance = Self {
+            socket,
             subscriptions: HashMap::new(),
+            vifs: HashMap::new(),
+            last_vifd: 0,
+            parent_if_index,
+        };
+
+        instance.add_if(parent_if_index).unwrap();
+        for if_index in downstreams {
+            instance.add_if(if_index).unwrap();
         }
+
+        instance
+    }
+
+    pub fn add_if(&mut self, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        if self.vifs.contains_key(&if_index) {
+            return Ok(());
+        }
+        self.last_vifd += 1;
+
+        self.socket.multicast_add_vif(self.last_vifd, if_index)?;
+        self.vifs.insert(if_index, self.last_vifd);
+        Ok(())
+    }
+
+    pub fn remove_if(&mut self, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        if let Some(vifd) = self.vifs.get(&if_index) {
+            self.socket.multicast_del_vif(*vifd)?;
+        }
+        self.vifs.remove(&if_index);
+        Ok(())
+    }
+
+    fn get_vifd(&self, if_index: InterfaceId) -> Option<socket::mifi_t> {
+        self.vifs.get(&if_index).cloned()
+    }
+
+    pub fn get_subscribed_interfaces(&self, group_addr: std::net::Ipv6Addr) -> HashSet<InterfaceId> {
+        self.subscriptions.iter()
+            .filter(|(_, subscriptions)| subscriptions.contains_key(&group_addr))
+            .map(|(if_index, _)| *if_index)
+            .collect()
     }
 
     pub fn add_subscription(&mut self, if_index: InterfaceId, group_addr: std::net::Ipv6Addr) {
@@ -46,13 +100,37 @@ impl MldSubscriptionManager {
             timestamp,
             group_addr,
         };
-        self.subscriptions.entry(if_index).or_insert(HashMap::new()).insert(group_addr, subscription);
+        let prev = self.subscriptions.entry(if_index).or_insert(HashMap::new()).insert(group_addr, subscription);
+        if prev.is_some() {
+            return;
+        }
+
+        let parent = self.get_vifd(self.parent_if_index).unwrap();
+        let output = self.get_subscribed_interfaces(group_addr).iter()
+            .filter_map(|if_index| self.get_vifd(*if_index))
+            .collect::<Vec<_>>();
+        let src = Ipv6Addr::UNSPECIFIED;
+
+        if let Err(e) = self.socket.multicast_add_mroute(parent, output, group_addr, src) {
+            log::error!("failed to add mroute: {}", e);
+        }
     }
 
     pub fn remove_old_subscriptions(&mut self, timeout: u64) {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        for (_, subscriptions) in self.subscriptions.iter_mut() {
-            subscriptions.retain(|_, subscription| now - subscription.timestamp <= timeout);
+        for if_index in self.subscriptions.keys().cloned().collect::<Vec<_>>() {
+            let subscriptions = self.subscriptions.get_mut(&if_index).unwrap();
+            for (group_addr, subscription) in subscriptions.clone().iter() {
+                if now - subscription.timestamp > timeout {
+                    subscriptions.remove(group_addr);
+                    let parent = self.vifs.get(&self.parent_if_index).cloned().unwrap();
+                    let src = Ipv6Addr::UNSPECIFIED;
+
+                    if let Err(e) = self.socket.multicast_del_mroute(parent, *group_addr, src) {
+                        log::error!("failed to del mroute: {}", e);
+                    }
+                }
+            }
         }
     }
 

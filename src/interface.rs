@@ -23,6 +23,7 @@ pub fn index_to_name(index: InterfaceId) -> Result<String, std::io::Error> {
 }
 
 pub fn name_to_index(name: &str) -> Result<InterfaceId, std::io::Error> {
+    let name = std::ffi::CString::new(name).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let index = unsafe { libc::if_nametoindex(name.as_ptr() as *const libc::c_char ) };
     if index == 0 {
         return Err(std::io::Error::last_os_error());

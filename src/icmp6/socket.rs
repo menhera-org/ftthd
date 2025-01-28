@@ -6,6 +6,8 @@ use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
 
 use std::ffi::c_int;
+use std::ffi::c_ushort;
+use std::net::Ipv6Addr;
 use libc::socket;
 use libc::setsockopt;
 use std::os::fd::AsRawFd;
@@ -127,6 +129,56 @@ impl RawIcmp6Socket {
     pub fn set_multicast_all(&self, multicast_all: bool) -> Result<(), std::io::Error> {
         let multicast_all = if multicast_all { 1 } else { 0 };
         unsafe { self.setsockopt(Ipv6Opt::IPV6_MULTICAST_ALL, &multicast_all) }
+    }
+
+    pub fn multicast_add_vif(&self, vif: mifi_t, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        let mif = mif6ctl {
+            mif6c_mifi: vif,
+            mif6c_flags: 0,
+            vifc_threshold: 1,
+            mif6c_pifi: if_index.inner_unchecked() as u16,
+            vifc_rate_limit: 0,
+        };
+        unsafe { self.setsockopt(Ipv6Opt::MRT6_ADD_MIF, &mif) }
+    }
+
+    pub fn multicast_del_vif(&self, vif: mifi_t) -> Result<(), std::io::Error> {
+        let mif = mif6ctl {
+            mif6c_mifi: vif,
+            mif6c_flags: 0,
+            vifc_threshold: 0,
+            mif6c_pifi: 0,
+            vifc_rate_limit: 0,
+        };
+        unsafe { self.setsockopt(Ipv6Opt::MRT6_DEL_MIF, &mif) }
+    }
+
+    pub fn multicast_add_mroute(&self, parent_vif: mifi_t, output_vifs: Vec<mifi_t>, group_addr: Ipv6Addr, source_addr: Ipv6Addr) -> Result<(), std::io::Error> {
+        let mut ifset: if_set = unsafe { std::mem::zeroed() };
+        for vif in output_vifs {
+            IF_SET(vif, &mut ifset);
+        }
+
+        let mfc = mf6cctl {
+            mf6cc_origin: libc::sockaddr_in6 { sin6_family: libc::AF_INET6 as libc::sa_family_t, sin6_port: 0, sin6_flowinfo: 0, sin6_addr: libc::in6_addr { s6_addr: source_addr.octets() }, sin6_scope_id: 0 },
+            mf6cc_mcastgrp: libc::sockaddr_in6 { sin6_family: libc::AF_INET6 as libc::sa_family_t, sin6_port: 0, sin6_flowinfo: 0, sin6_addr: libc::in6_addr { s6_addr: group_addr.octets() }, sin6_scope_id: 0 },
+            mf6cc_parent: parent_vif,
+            mf6cc_ifset: ifset,
+        };
+
+        unsafe { self.setsockopt(Ipv6Opt::MRT6_ADD_MFC, &mfc) }
+    }
+
+    pub fn multicast_del_mroute(&self, parent_vif: mifi_t, group_addr: Ipv6Addr, source_addr: Ipv6Addr) -> Result<(), std::io::Error> {
+        let ifset: if_set = unsafe { std::mem::zeroed() };
+        let mfc = mf6cctl {
+            mf6cc_origin: libc::sockaddr_in6 { sin6_family: libc::AF_INET6 as libc::sa_family_t, sin6_port: 0, sin6_flowinfo: 0, sin6_addr: libc::in6_addr { s6_addr: source_addr.octets() }, sin6_scope_id: 0 },
+            mf6cc_mcastgrp: libc::sockaddr_in6 { sin6_family: libc::AF_INET6 as libc::sa_family_t, sin6_port: 0, sin6_flowinfo: 0, sin6_addr: libc::in6_addr { s6_addr: group_addr.octets() }, sin6_scope_id: 0 },
+            mf6cc_parent: parent_vif,
+            mf6cc_ifset: ifset,
+        };
+
+        unsafe { self.setsockopt(Ipv6Opt::MRT6_DEL_MFC, &mfc) }
     }
 
     pub fn recv(&self, packet: &mut packet::Packet) -> Result<(), std::io::Error> {
@@ -390,6 +442,22 @@ impl AsyncIcmp6Socket {
     pub fn leave_multicast(&self, group: std::net::Ipv6Addr) -> Result<(), std::io::Error> {
         self.inner.get_ref().leave_multicast(group)
     }
+
+    pub fn multicast_add_vif(&self, vif: mifi_t, if_index: InterfaceId) -> Result<(), std::io::Error> {
+        self.inner.get_ref().multicast_add_vif(vif, if_index)
+    }
+
+    pub fn multicast_del_vif(&self, vif: mifi_t) -> Result<(), std::io::Error> {
+        self.inner.get_ref().multicast_del_vif(vif)
+    }
+
+    pub fn multicast_add_mroute(&self, parent_vif: mifi_t, output_vifs: Vec<mifi_t>, group_addr: Ipv6Addr, source_addr: Ipv6Addr) -> Result<(), std::io::Error> {
+        self.inner.get_ref().multicast_add_mroute(parent_vif, output_vifs, group_addr, source_addr)
+    }
+
+    pub fn multicast_del_mroute(&self, parent_vif: mifi_t, group_addr: Ipv6Addr, source_addr: Ipv6Addr) -> Result<(), std::io::Error> {
+        self.inner.get_ref().multicast_del_mroute(parent_vif, group_addr, source_addr)
+    }
 }
 
 pub trait SocketOpt {
@@ -440,4 +508,58 @@ impl Ipv6Opt {
     pub const MRT6_ADD_MFC_PROXY: Self = Self(Self::MRT6_BASE + 10);
     pub const MRT6_DEL_MFC_PROXY: Self = Self(Self::MRT6_BASE + 11);
     pub const MRT6_ADD_MIF_PROXY: Self = Self(Self::MRT6_BASE + 12);
+}
+
+#[allow(non_camel_case_types)]
+pub type if_mask = u32;
+
+#[allow(non_camel_case_types)]
+pub type mifi_t = c_ushort;
+
+pub const ALL_MIFS: mifi_t = !0;
+pub const MAXMIFS: usize = 32;
+
+pub const MIFF_REGISTER: libc::c_uchar = 0x1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct if_set {
+    pub ifs_bits: [if_mask; 8],
+}
+
+#[allow(non_snake_case)]
+pub fn IF_SET(n: mifi_t, p: &mut if_set) {
+    p.ifs_bits[(n >> 5) as usize] |= 1 << (n & 0x1f);
+}
+
+#[allow(non_snake_case)]
+pub fn IF_CLR(n: mifi_t, p: &mut if_set) {
+    p.ifs_bits[(n >> 5) as usize] &= !(1 << (n & 0x1f));
+}
+
+#[allow(non_snake_case)]
+pub fn IF_ISSET(n: mifi_t, p: &if_set) -> bool {
+    p.ifs_bits[(n >> 5) as usize] & (1 << (n & 0x1f)) != 0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct mif6ctl {
+    pub mif6c_mifi: mifi_t,
+    pub mif6c_flags: libc::c_uchar,
+    pub vifc_threshold: libc::c_uchar,
+    pub mif6c_pifi: u16,
+    pub vifc_rate_limit: libc::c_uint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct mf6cctl {
+    pub mf6cc_origin: libc::sockaddr_in6,
+    pub mf6cc_mcastgrp: libc::sockaddr_in6,
+    pub mf6cc_parent: mifi_t,
+    pub mf6cc_ifset: if_set,
 }

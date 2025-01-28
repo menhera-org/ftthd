@@ -658,15 +658,17 @@ impl Icmp6Writer {
         hop_by_hop[0] = 0x3a;
 
         // length
-        hop_by_hop[1] = 0x01;
-
-        // router alert
-        hop_by_hop[2] = 0x05;
-        hop_by_hop[3] = 0x00;
+        hop_by_hop[1] = 0x00;
 
         // padding
-        hop_by_hop[4] = 0x01;
+        hop_by_hop[2] = 0x01;
+        hop_by_hop[3] = 0x00;
+
+        // router alert
+        hop_by_hop[4] = 0x05;
         hop_by_hop[5] = 0x02;
+        hop_by_hop[6] = 0x00;
+        hop_by_hop[7] = 0x00;
 
         self.set_hop_by_hop(Some(hop_by_hop));
     }
