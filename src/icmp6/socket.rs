@@ -120,6 +120,11 @@ impl RawIcmp6Socket {
         unsafe { self.setsockopt(Ipv6Opt::IPV6_ROUTER_ALERT, &router_alert) }
     }
 
+    pub fn set_autoflowlabel(&self, autoflowlabel: bool) -> Result<(), std::io::Error> {
+        let autoflowlabel = if autoflowlabel { 1 } else { 0 };
+        unsafe { self.setsockopt(Ipv6Opt::IPV6_AUTOFLOWLABEL, &autoflowlabel) }
+    }
+
     pub fn set_mrt_flag(&self, flag: bool) -> Result<(), std::io::Error> {
         let opt = if flag { Ipv6Opt::MRT6_INIT } else { Ipv6Opt::MRT6_DONE };
         let flag = 1;
@@ -493,6 +498,7 @@ impl Ipv6Opt {
     pub const IPV6_RECVHOPOPTS: Self = Self(libc::IPV6_RECVHOPOPTS);
     pub const IPV6_RECVHOPLIMIT: Self = Self(libc::IPV6_RECVHOPLIMIT);
     pub const IPV6_MULTICAST_ALL: Self = Self(libc::IPV6_MULTICAST_ALL);
+    pub const IPV6_AUTOFLOWLABEL: Self = Self(libc::IPV6_AUTOFLOWLABEL);
 
     const MRT6_BASE: c_int = 200;
     pub const MRT6_INIT: Self = Self(Self::MRT6_BASE + 0);

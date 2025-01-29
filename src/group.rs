@@ -12,6 +12,7 @@ use std::net::Ipv6Addr;
 pub struct MldSubscription {
     pub timestamp: u64,
     pub group_addr: Ipv6Addr,
+    pub source_addrs: HashSet<Ipv6Addr>,
 }
 
 #[derive(Debug)]
@@ -78,25 +79,52 @@ impl MldSubscriptionManager {
             .collect()
     }
 
-    pub fn add_subscription(&mut self, if_index: InterfaceId, group_addr: std::net::Ipv6Addr) {
+    pub fn add_subscription(&mut self, if_index: InterfaceId, group_addr: std::net::Ipv6Addr, source_addrs: HashSet<Ipv6Addr>) {
         let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        let subscription = MldSubscription {
-            timestamp,
-            group_addr,
+
+        let source_addrs = {
+            let subscription = self.subscriptions
+                .entry(if_index)
+                .or_insert(HashMap::new())
+                .entry(group_addr)
+                .or_insert(MldSubscription {
+                    timestamp: 0,
+                    group_addr,
+                    source_addrs: HashSet::new(),
+                });
+            
+            if subscription.timestamp != 0 {
+                return;
+            }
+
+            subscription.timestamp = timestamp;
+
+            for source_addr in source_addrs {
+                subscription.source_addrs.insert(source_addr);
+            }
+
+            let source_addrs = subscription.source_addrs.clone();
+
+            source_addrs
         };
-        let prev = self.subscriptions.entry(if_index).or_insert(HashMap::new()).insert(group_addr, subscription);
-        if prev.is_some() {
-            return;
-        }
 
         let parent = self.get_vifd(self.parent_if_index).unwrap();
         let output = self.get_subscribed_interfaces(group_addr).iter()
             .filter_map(|if_index| self.get_vifd(*if_index))
             .collect::<Vec<_>>();
-        let src = Ipv6Addr::UNSPECIFIED;
-
-        if let Err(e) = self.socket.multicast_add_mroute(parent, output, group_addr, src) {
-            log::error!("failed to add mroute: {}", e);
+        
+        if source_addrs.is_empty() {
+            let src = Ipv6Addr::UNSPECIFIED;
+            if let Err(e) = self.socket.multicast_add_mroute(parent, output, group_addr, src) {
+                log::error!("failed to add mroute: {}", e);
+            }
+            return;
+        }
+        
+        for src in source_addrs {
+            if let Err(e) = self.socket.multicast_add_mroute(parent, output.clone(), group_addr, src) {
+                log::error!("failed to add mroute: {}", e);
+            }
         }
     }
 
@@ -108,10 +136,21 @@ impl MldSubscriptionManager {
                 if now - subscription.timestamp > timeout {
                     subscriptions.remove(group_addr);
                     let parent = self.vifs.get(&self.parent_if_index).cloned().unwrap();
-                    let src = Ipv6Addr::UNSPECIFIED;
 
-                    if let Err(e) = self.socket.multicast_del_mroute(parent, *group_addr, src) {
-                        log::error!("failed to del mroute: {}", e);
+                    if subscription.source_addrs.is_empty() {
+                        let src = Ipv6Addr::UNSPECIFIED;
+                        if let Err(e) = self.socket.multicast_del_mroute(parent, *group_addr, src) {
+                            log::error!("failed to del mroute: {}", e);
+                        }
+                        continue;
+                    }
+
+                    let _ = self.socket.multicast_del_mroute(parent, *group_addr, Ipv6Addr::UNSPECIFIED);
+
+                    for src in subscription.source_addrs.iter() {
+                        if let Err(e) = self.socket.multicast_del_mroute(parent, *group_addr, *src) {
+                            log::error!("failed to del mroute: {}", e);
+                        }
                     }
                 }
             }
@@ -122,6 +161,18 @@ impl MldSubscriptionManager {
 
     pub fn get_groups(&self) -> HashSet<Ipv6Addr> {
         self.subscriptions.iter().flat_map(|(_, subscriptions)| subscriptions.keys().cloned()).collect()
+    }
+
+    pub fn get_source_addresses(&self, group_addr: Ipv6Addr) -> HashSet<Ipv6Addr> {
+        self.subscriptions.iter().flat_map(|(_, subscriptions)| {
+            subscriptions.iter().filter_map(|(addr, subscription)| {
+                if *addr == group_addr {
+                    Some(subscription.source_addrs.clone())
+                } else {
+                    None
+                }
+            })
+        }).flatten().collect()
     }
 }
 

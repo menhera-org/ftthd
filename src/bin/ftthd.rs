@@ -5,6 +5,7 @@ use ftthd::group::NdpMulticastManager;
 
 use clap::{Parser, Subcommand};
 
+use std::collections::HashSet;
 use std::net::Ipv6Addr;
 use std::path::PathBuf;
 
@@ -85,6 +86,7 @@ async fn start(config: ftthd::config::ConfigManager) {
     raw_socket.set_recv_pktinfo(true).unwrap();
     raw_socket.set_multicast_loop(false).unwrap();
     raw_socket.set_multicast_all(true).unwrap();
+    raw_socket.set_autoflowlabel(false).unwrap();
 
     raw_socket.join_multicast("ff02::16".parse().unwrap(), InterfaceId::UNSPECIFIED).unwrap();
 
@@ -400,17 +402,24 @@ async fn start(config: ftthd::config::ConfigManager) {
                     continue;
                 }
 
-                subscription_manager.remove_old_subscriptions(60);
+                subscription_manager.remove_old_subscriptions(300);
                 let groups = subscription_manager.get_groups();
                 if !groups.contains(&group_addr) {
                     log::debug!("Received Multicast Listener Query for non-subscribed group: {}", group_addr);
                     continue;
                 }
 
+                let source_addresses = subscription_manager.get_source_addresses(group_addr).iter().map(|addr| *addr).collect::<Vec<_>>();
+                let record_type = if !source_addresses.is_empty() {
+                    1 // MODE_IS_INCLUDE
+                } else {
+                    2 // MODE_IS_EXCLUDE
+                };
+
                 let report_record = ftthd::icmp6::mld::MulticastReportRecord {
                     multicast_address: group_addr,
-                    record_type: 2, // MODE_IS_EXCLUDE
-                    source_addresses: Vec::new(),
+                    record_type,
+                    source_addresses,
                 };
 
                 let report = ftthd::icmp6::mld::V2MulticastListenerReport {
@@ -491,7 +500,7 @@ async fn start(config: ftthd::config::ConfigManager) {
                     is_from_downstream = true;
                 }
 
-                subscription_manager.remove_old_subscriptions(60);
+                subscription_manager.remove_old_subscriptions(300);
 
                 let mut records = Vec::new();
                 for record in mlr.records {
@@ -514,13 +523,22 @@ async fn start(config: ftthd::config::ConfigManager) {
                         continue;
                     }
 
+                    let source_addresses: HashSet<_> = record.source_addresses.iter().map(|addr| *addr).collect();
+                    subscription_manager.add_subscription(in_if, group, source_addresses);
+
+                    let source_addresses = subscription_manager.get_source_addresses(group).iter().map(|addr| *addr).collect::<Vec<_>>();
+                    let record_type = if !source_addresses.is_empty() {
+                        1 // MODE_IS_INCLUDE
+                    } else {
+                        2 // MODE_IS_EXCLUDE
+                    };
+
                     let report_record = ftthd::icmp6::mld::MulticastReportRecord {
                         multicast_address: group,
-                        record_type: 2, // MODE_IS_EXCLUDE
-                        source_addresses: Vec::new(),
+                        record_type,
+                        source_addresses,
                     };
                     records.push(report_record);
-                    subscription_manager.add_subscription(in_if, group);
                 }
 
                 let out_if_name = &config.interfaces.upstream;
